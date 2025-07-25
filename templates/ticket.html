@@ -1,0 +1,101 @@
+{% extends 'base.html' %}
+{% block content %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/css/bootstrap.min.css" type="text/css">
+    <link rel="stylesheet" href="/static/css/style.css" type="text/css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" type="text/css">
+    <title>User Tickets</title>
+</head>
+<body>
+
+<div class="container">
+    <div class="row">
+        <div class="col-lg-12 pt-4 d-print-none">
+            <button class="btn btn-success" id="download" onclick="printTicket()">Print</button>
+        </div>
+
+        <div class="col-lg-11 mx-auto" id="ticket">
+            <div class="row mb-4">
+                <div class="col-lg-12 text-center p-2 text-success">
+                    <h4>Your Train Tickets</h4>
+                    <p><strong>Booking ID:</strong> {{ bookings.id }}</p>
+                </div>
+
+                <!-- Tickets Loop -->
+                {% for t in ticket %}
+                <div class="col-lg-12 mx-auto mb-4 border border-success">
+                    <div class="row">
+                        <!-- Right side (single ticket view) -->
+                        <div class="col-lg-5 mx-auto">
+                            <div class="row">
+                                <div class="col-lg-12 mx-auto bg-success text-white border border-dark border-right-0 border-bottom-0 border-top-0">
+                                    <div class="row">
+                                        <div class="col-lg-7 text-center">
+                                            <h5>LTP Ticket</h5>
+                                        </div>
+                                        <div class="col-lg-5 text-right">
+                                            <!-- Removed unnecessary input -->
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-lg-12 text-muted text-center pt-1">
+                                    <p>(Passenger copy)</p>
+                                </div>
+                                <div class="col-lg-12 mx-auto pb-1">
+                                    <h6>Passenger Name:<br>{{ t.user.first_name }} {{ t.user.last_name }}</h6>
+                                    <h6>Travel Date:<br>{{ t.travel_date }}</h6>
+                                    <h6>Travel Time:<br>{{ t.departure }}</h6>
+                                    <h6>Train Name:<br>{{ t.train_name }}</h6>
+                                    <h6>From:<br>{{ t.source }}</h6>
+                                    <h6>To:<br>{{ t.destination }}</h6>
+                                    <h6>Class Type:<br>{{ t.class_type }}</h6>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                    <p>No tickets found for this booking.</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/jquery-slim.min.js" crossorigin="anonymous"></script>
+<script src="/static/js/popper.min.js" crossorigin="anonymous"></script>
+<script src="/static/js/bootstrap.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.js"></script>
+<script src="/static/js/pdf.js" crossorigin="anonymous"></script>
+
+<script>
+function printTicket() {
+    const printContent = document.getElementById('ticket').innerHTML;
+    const originalContent = document.body.innerHTML;
+
+    document.body.innerHTML = printContent;
+    window.print();
+
+    document.body.innerHTML = originalContent;
+    location.reload();
+}
+</script>
+
+<script>
+    // Auto print if URL contains ?print=true
+    window.addEventListener('DOMContentLoaded', function () {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('print') === 'true') {
+            window.print();
+        }
+    });
+</script>
+
+</body>
+</html>
+{% endblock content %}

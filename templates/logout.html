@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+
+{% block title %}
+    Logout
+{% endblock title %}
+
+{% block content %}
+    <h1>Goodbye</h1>
+    <p>You have logged out.</p>
+
+    {% if not request.user.is_authenticated %}
+        <ul>
+            <li>
+                <a class="nav-link" href="{% url 'login' %}">Login</a>
+            </li>
+            <li>
+                <a class="nav-link" href="{% url 'signup' %}">Register</a>
+            </li>
+        </ul>
+    {% endif %}
+{% endblock %}

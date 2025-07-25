@@ -1,0 +1,120 @@
+{% extends 'base.html' %}
+{% load custom_filter %}
+{% load custom_filter_date %}
+
+{% block title %}
+    Available Trains
+{% endblock title %}
+
+{% block content %}
+<div class="available">
+    <div class="col-lg-12 text-center p-4 bg-dark text-white">
+        <h4>Available Trains ({{ search.count }})</h4>
+    </div>
+
+    <div class="row bg-primary text-white p-3 mr-0 text-center">
+        <div class="col-lg-12 text-left pl-4">
+            <h3>Results</h3>
+        </div>
+        <div class="col-lg-3">
+            <h5>From:</h5>
+            <h6>{{ source.name }}, {{ source.place }}</h6>
+        </div>
+        <div class="col-lg-3">
+            <h5>To:</h5>
+            <h6>{{ destination.name }}, {{ destination.place }}</h6>
+        </div>
+        <div class="col-lg-2">
+            <h5>Date:</h5>
+            <h6>{{ request.GET.date }}</h6>
+        </div>
+        <div class="col-lg-2">
+            <h5>Class Type:</h5>
+            <h6>{{ class_type.name }}</h6>
+        </div>
+        <div class="col-lg-1">
+            <h5>Adult:</h5>
+            <h6>{{ request.GET.pa }}</h6>
+        </div>
+        <div class="col-lg-1">
+            <h5>Child:</h5>
+            <h6>{{ request.GET.pc }}</h6>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-12 text-center p-4 bg-dark text-white">
+                <h4>Available Trains</h4>
+            </div>
+            {% if not search.count > 0 %}
+            <div class="col-lg-12 m-1">
+                <h5 class="text-center">Sorry! No available train for this source and destination.</h5>
+            </div>
+            {% else %}
+            <div class="col-lg-12 m-1">
+                <table class="table text-center text-white bg-dark">
+                    <thead class="thead-dark bg-dark">
+                        <tr>
+                            <th scope="col">Train Name</th>
+                            <th scope="col">Departure</th>
+                            <th scope="col">Arrival</th>
+                            <th scope="col">Duration</th>
+                            <th scope="col">Total Passengers</th>
+                            <th scope="col">Fare</th>
+                            <th scope="col">Book</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for train in search %}
+                    <tr>
+                        <form method="get" action="{% url 'booking' %}">
+                            <td>
+                                <input type="hidden" name="train" value="{{ train.name }}">
+                                {{ train.name }}
+                            </td>
+                            <td>
+                                <input type="hidden" name="departure" value="{{ train.departure_time }}">
+                                {{ train.departure_time }}
+                            </td>
+                            <td>
+                                <input type="hidden" name="arrival" value="{{ train.arrival_time }}">
+                                {{ train.arrival_time }}
+                            </td>
+                            <td>{{ train.arrival_time|duration:train.departure_time }}</td>
+                            <td>
+                                <input type="hidden" name="tp" value="{{ request.GET.pa|passengers:request.GET.pc }}">
+                                {{ request.GET.pa|passengers:request.GET.pc }}
+                            </td>
+                            <td>
+                                <input type="hidden" name="total_fare" value="{{ request.GET.pa|passengers:request.GET.pc|multiply:class_type.price }}">
+                                {{ request.GET.pa|passengers:request.GET.pc|multiply:class_type.price }}
+                            </td>
+                            <td>
+                                <!-- Hidden fields to persist full booking context -->
+                                <input type="hidden" name="source" value="{{ source.name }}">
+                                <input type="hidden" name="destination" value="{{ destination.name }}">
+                                <input type="hidden" name="date" value="{{ request.GET.date }}">
+                                <input type="hidden" name="pa" value="{{ request.GET.pa }}">
+                                <input type="hidden" name="pc" value="{{ request.GET.pc }}">
+                                <input type="hidden" name="ctype" value="{{ class_type.id }}">
+
+                                {% with show=request.GET.date|book:train.departure_time %}
+                                {% if show %}
+                                    <button type="submit" class="btn btn-success">Book</button>
+                                {% else %}
+                                    <span class="text-danger">The train left!</span>
+                                {% endif %}
+                                {% endwith %}
+                            </td>
+                        </form>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock content %}
