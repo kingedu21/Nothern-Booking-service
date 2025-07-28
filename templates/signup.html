@@ -27,7 +27,8 @@
             </div>
 
             <!-- signup Form -->
-            <form method="post" action="signup">
+           <form action="{% url 'signup' %}" method="post">
+
                 {% csrf_token %}
                 <input type="text" id="first_name" class="fadeIn second" name="first_name" autocomplete="off"
                        placeholder="enter first name">

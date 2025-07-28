@@ -1,6 +1,8 @@
 
 
 from django.http import  HttpResponseBadRequest
+from datetime import timezone as dt_timezone
+
 
 from django.shortcuts import render, redirect
 from django.views import View
@@ -226,9 +228,11 @@ class BookingHistory(View):
         if user.is_authenticated:
             booking = Booking.objects.filter(user=user).order_by('-id')
 
-            current_date = datetime.now(timezone.utc)
+            current_time = timezone.now().astimezone(dt_timezone.utc)
+
+
             
-            return render(request, 'booking_history.html', {'booking':booking, 'current_date':current_date})
+            return render(request, 'booking_history.html', {'booking':booking, 'current_date':current_time})
         else:
             return redirect('login')
 
@@ -570,6 +574,53 @@ from django.contrib import messages
 
 
 
+
+
+# @login_required
+# def process_payment(request):
+#     if request.method == 'POST':
+#         booking_id = request.POST.get('booking_id')
+#         ptype = request.POST.get('ptype')
+#         payment_code = request.POST.get('payment_code')
+
+#         print(f"[PROCESS PAYMENT] Booking ID: {booking_id}, Payment Type: {ptype}, Payment Code: {payment_code}")
+
+#         if not booking_id:
+#             return JsonResponse({'message': 'Booking ID is missing.'}, status=400)
+
+#         try:
+#             booking = Booking.objects.get(id=booking_id, user=request.user)
+#         except Booking.DoesNotExist:
+#             return JsonResponse({'message': 'Invalid booking ID or booking does not belong to user.'}, status=400)
+
+#         if ptype != 'rocket':
+#             return JsonResponse({'message': 'Other payment methods not implemented yet.'}, status=400)
+
+#         if not payment_code:
+#             return JsonResponse({'message': 'Payment code is required for MPesa confirmation.'}, status=400)
+
+#         try:
+#             mpesa_transaction = MpesaTransaction.objects.get(
+#                 booking=booking, trx_id=payment_code, result_code='0'
+#             )
+#         except MpesaTransaction.DoesNotExist:
+#             return JsonResponse({'message': 'Invalid or unverified MPesa transaction.'}, status=400)
+
+#         payment = booking.payment_set.first()
+#         if not payment:
+#             return JsonResponse({'message': 'No payment record found for this booking.'}, status=400)
+
+#         payment.trxid = payment_code
+#         payment.save()
+
+#         return JsonResponse({
+#             'message': 'MPesa payment confirmed successfully.',
+#             'booking_id': booking.id
+#         }, status=200)
+
+#     return JsonResponse({'message': 'Invalid request method.'}, status=405)
+
+
 @login_required
 def process_payment(request):
     if request.method == 'POST':
@@ -593,13 +644,13 @@ def process_payment(request):
         if not payment_code:
             return JsonResponse({'message': 'Payment code is required for MPesa confirmation.'}, status=400)
 
-        # Verify MPesa transaction
         try:
-            mpesa_transaction = MpesaTransaction.objects.get(booking=booking, trx_id=payment_code, result_code='0')
+            mpesa_transaction = MpesaTransaction.objects.get(
+                booking=booking, trx_id=payment_code, result_code='0'
+            )
         except MpesaTransaction.DoesNotExist:
             return JsonResponse({'message': 'Invalid or unverified MPesa transaction.'}, status=400)
 
-        # Update Payment object
         payment = booking.payment_set.first()
         if not payment:
             return JsonResponse({'message': 'No payment record found for this booking.'}, status=400)
@@ -607,14 +658,27 @@ def process_payment(request):
         payment.trxid = payment_code
         payment.save()
 
+        # ✅ Save the phone number from MPesa
+        phone = mpesa_transaction.phone_number
+        if phone:
+            mpesa_transaction.phone_number= phone
+            mpesa_transaction.save()
+
+            # ✅ Optionally store it on user's profile if the user model has a phone field
+            user = booking.user
+            user = mpesa_transaction.booking.user
+            user.phone = phone  # Ensure `phone` field exists on User model
+            user.save()
+            if not user.phone:
+                user.phone = phone
+                user.save()
+
         return JsonResponse({
             'message': 'MPesa payment confirmed successfully.',
             'booking_id': booking.id
         }, status=200)
 
     return JsonResponse({'message': 'Invalid request method.'}, status=405)
-
-
 
 
 @login_required
@@ -627,7 +691,25 @@ def stk_push(request):
         try:
             data = json.loads(request.body)
 
-            phone = data.get('phone')
+            raw_phone = data.get('phone')
+
+            # Sanitize phone number to 2547XXXXXXXX format
+            if not raw_phone:
+                return JsonResponse({'status': 'error', 'message': 'Phone number is required'}, status=400)
+
+            phone = raw_phone.strip().replace(' ', '').replace('+', '')
+
+            if phone.startswith('0'):
+                phone = '254' + phone[1:]
+            elif phone.startswith('7'):
+                phone = '254' + phone
+            elif not phone.startswith('254'):
+                return JsonResponse({'status': 'error', 'message': 'Phone number must start with 07, 7 or 254'}, status=400)
+
+            # Final validation
+            if not phone.isdigit() or len(phone) != 12:
+                return JsonResponse({'status': 'error', 'message': 'Invalid phone number format'}, status=400)
+
             amount = data.get('amount')
             booking_id = data.get('booking_id')
 
@@ -697,6 +779,7 @@ def stk_push(request):
                     phone_number=phone,
                     amount=amount,
                     merchant_request_id=merchant_request_id,
+                    trx_id=checkout_request_id or merchant_request_id,
                     checkout_request_id=checkout_request_id
                 )
 
@@ -718,6 +801,200 @@ def stk_push(request):
 
     return HttpResponseBadRequest("Invalid request method")
 
+# @csrf_exempt
+# def mpesa_callback(request):
+#     try:
+#         data = json.loads(request.body.decode('utf-8'))
+#         body = data.get("Body", {}).get("stkCallback", {})
+#         merchant_request_id = body.get("MerchantRequestID")
+#         checkout_request_id = body.get("CheckoutRequestID")
+#         result_code = body.get("ResultCode")
+#         result_desc = body.get("ResultDesc")
+
+#         callback_metadata = body.get("CallbackMetadata", {}).get("Item", [])
+#         trx_id = None
+#         amount = None
+#         for item in callback_metadata:
+#             name = item.get("Name")
+#             if name == "MpesaReceiptNumber":
+#                 trx_id = item.get("Value")
+#             if name == "Amount":
+#                 amount = item.get("Value")
+
+#         # Update MpesaTransaction
+#         try:
+#             mpesa_transaction = MpesaTransaction.objects.get(
+#                 checkout_request_id=checkout_request_id,
+#                 merchant_request_id=merchant_request_id
+#             )
+#         except MpesaTransaction.DoesNotExist:
+#             print(f"[CALLBACK ERROR]: No MpesaTransaction found for CheckoutRequestID: {checkout_request_id}")
+#             return JsonResponse({"ResultCode": 1, "ResultDesc": "Transaction not found"}, status=404)
+
+#         mpesa_transaction.trx_id = trx_id
+#         mpesa_transaction.result_code = result_code
+#         mpesa_transaction.result_desc = result_desc
+#         mpesa_transaction.amount = amount
+#         mpesa_transaction.save()
+
+#         # Update Payment object if transaction was successful
+#         if result_code == 0:  # MPesa success code
+#             try:
+#                 payment = Payment.objects.get(booking=mpesa_transaction.booking)
+#                 payment.trxid = trx_id
+#                 payment.save()
+#                 print(f"[CALLBACK] Payment updated for Booking ID: {mpesa_transaction.booking.id}, TrxID: {trx_id}")
+#             except Payment.DoesNotExist:
+#                 print(f"[CALLBACK ERROR]: No Payment found for Booking ID: {mpesa_transaction.booking.id}")
+#                 # Optionally create a Payment object here if needed
+#                 pass
+
+#         return JsonResponse({"ResultCode": 0, "ResultDesc": "Accepted"}, status=200)
+
+#     except Exception as e:
+#         print(f"[CALLBACK ERROR]: {e}")
+#         return JsonResponse({"ResultCode": 1, "ResultDesc": f"Failed: {str(e)}"}, status=500)
+
+
+# @csrf_exempt
+# def mpesa_callback(request):
+#     try:
+#         data = json.loads(request.body.decode('utf-8'))
+#         body = data.get("Body", {}).get("stkCallback", {})
+#         merchant_request_id = body.get("MerchantRequestID")
+#         checkout_request_id = body.get("CheckoutRequestID")
+#         result_code = str(body.get("ResultCode"))  # Make sure it's a string
+#         result_desc = body.get("ResultDesc")
+
+#         trx_id = None
+#         amount = None
+#         # Save the phone number from MPesa
+#         mpesa_transaction.phone = phone
+
+#         # Optionally store on user's profile or custom model
+#         user = mpesa_transaction.booking.user
+#         user.phone = phone  # If you have such a field
+#         user.save()
+
+
+#         # Extract metadata fields
+#         for item in body.get("CallbackMetadata", {}).get("Item", []):
+#             if item["Name"] == "MpesaReceiptNumber":
+#                 trx_id = item["Value"]
+#             elif item["Name"] == "Amount":
+#                 amount = item["Value"]
+#             elif item["Name"] == "PhoneNumber":
+#                 phone = item["Value"]
+
+#         # Ensure all required values are captured
+#         print(f"[CALLBACK] CheckoutRequestID: {checkout_request_id}, TrxID: {trx_id}, ResultCode: {result_code}, Amount: {amount}, Phone: {phone}")
+
+#         # Find the pending transaction
+#         try:
+#             mpesa_transaction = MpesaTransaction.objects.get(
+#                 checkout_request_id=checkout_request_id,
+#                 merchant_request_id=merchant_request_id
+#             )
+#         except MpesaTransaction.DoesNotExist:
+#             print(f"[CALLBACK ERROR]: No MpesaTransaction found for CheckoutRequestID: {checkout_request_id}")
+#             return JsonResponse({"ResultCode": 1, "ResultDesc": "Transaction not found"}, status=404)
+
+#         # Update transaction
+#                 # Save the phone number from MPesa
+#         mpesa_transaction.phone = phone
+
+#         # Optionally store on user's profile or custom model
+#         user = mpesa_transaction.booking.user
+#         user.phone = phone  # If you have such a field
+#         user.save()
+
+#         mpesa_transaction.trx_id = trx_id
+#         mpesa_transaction.result_code = result_code
+#         mpesa_transaction.result_desc = result_desc
+#         mpesa_transaction.amount = amount
+#         mpesa_transaction.phone = phone
+#         mpesa_transaction.save()
+
+#         # Optional: Update or create payment record
+#         if result_code == '0':
+#             try:
+#                 payment = Payment.objects.get(booking=mpesa_transaction.booking)
+#             except Payment.DoesNotExist:
+#                 payment = Payment(booking=mpesa_transaction.booking)
+#             payment.trxid = trx_id
+#             payment.save()
+#             print(f"[CALLBACK] Payment updated for Booking ID: {mpesa_transaction.booking.id}, TrxID: {trx_id}")
+
+#         return JsonResponse({"ResultCode": 0, "ResultDesc": "Accepted"}, status=200)
+
+#     except Exception as e:
+#         print(f"[CALLBACK ERROR]: {e}")
+#         return JsonResponse({"ResultCode": 1, "ResultDesc": f"Failed: {str(e)}"}, status=500)
+
+
+# @csrf_exempt
+# def mpesa_callback(request):
+#     try:
+#         data = json.loads(request.body.decode('utf-8'))
+#         body = data.get("Body", {}).get("stkCallback", {})
+#         merchant_request_id = body.get("MerchantRequestID")
+#         checkout_request_id = body.get("CheckoutRequestID")
+#         result_code = str(body.get("ResultCode"))
+#         result_desc = body.get("ResultDesc")
+
+#         trx_id = None
+#         amount = None
+#         phone = None  # Initialize here
+
+#         # Extract metadata fields
+#         for item in body.get("CallbackMetadata", {}).get("Item", []):
+#             if item["Name"] == "MpesaReceiptNumber":
+#                 trx_id = item["Value"]
+#             elif item["Name"] == "Amount":
+#                 amount = item["Value"]
+#             elif item["Name"] == "PhoneNumber":
+#                 phone = item["Value"]
+
+#         print(f"[CALLBACK] CheckoutRequestID: {checkout_request_id}, TrxID: {trx_id}, ResultCode: {result_code}, Amount: {amount}, Phone: {phone}")
+
+#         # Find the pending transaction
+#         try:
+#             mpesa_transaction = MpesaTransaction.objects.get(
+#                 checkout_request_id=checkout_request_id,
+#                 merchant_request_id=merchant_request_id
+#             )
+#         except MpesaTransaction.DoesNotExist:
+#             print(f"[CALLBACK ERROR]: No MpesaTransaction found for CheckoutRequestID: {checkout_request_id}")
+#             return JsonResponse({"ResultCode": 1, "ResultDesc": "Transaction not found"}, status=404)
+
+#         # Update transaction
+#         mpesa_transaction.trx_id = trx_id
+#         mpesa_transaction.result_code = result_code
+#         mpesa_transaction.result_desc = result_desc
+#         mpesa_transaction.amount = amount
+#         mpesa_transaction.phone = phone
+#         mpesa_transaction.save()
+
+#         # Optionally store on user's profile or custom model
+#         user = mpesa_transaction.booking.user
+#         if hasattr(user, 'phone'):
+#             user.phone = phone
+#             user.save()
+
+#         # Update or create payment record
+#         if result_code == '0':
+#             payment, _ = Payment.objects.get_or_create(booking=mpesa_transaction.booking)
+#             payment.trxid = trx_id
+#             payment.save()
+#             print(f"[CALLBACK] Payment updated for Booking ID: {mpesa_transaction.booking.id}, TrxID: {trx_id}")
+
+#         return JsonResponse({"ResultCode": 0, "ResultDesc": "Accepted"}, status=200)
+
+#     except Exception as e:
+#         print(f"[CALLBACK ERROR]: {e}")
+#         return JsonResponse({"ResultCode": 1, "ResultDesc": f"Failed: {str(e)}"}, status=500)
+
+
 @csrf_exempt
 def mpesa_callback(request):
     try:
@@ -725,46 +1002,61 @@ def mpesa_callback(request):
         body = data.get("Body", {}).get("stkCallback", {})
         merchant_request_id = body.get("MerchantRequestID")
         checkout_request_id = body.get("CheckoutRequestID")
-        result_code = body.get("ResultCode")
+        result_code = str(body.get("ResultCode"))
         result_desc = body.get("ResultDesc")
 
-        callback_metadata = body.get("CallbackMetadata", {}).get("Item", [])
         trx_id = None
         amount = None
-        for item in callback_metadata:
-            name = item.get("Name")
-            if name == "MpesaReceiptNumber":
-                trx_id = item.get("Value")
-            if name == "Amount":
-                amount = item.get("Value")
+        phone = None
 
-        # Update MpesaTransaction
+        # Extract transaction details from metadata
+        for item in body.get("CallbackMetadata", {}).get("Item", []):
+            if item["Name"] == "MpesaReceiptNumber":
+                trx_id = item["Value"]
+            elif item["Name"] == "Amount":
+                amount = item["Value"]
+            elif item["Name"] == "PhoneNumber":
+                phone = item["Value"]
+
+        print(f"[CALLBACK] CheckoutRequestID: {checkout_request_id}, TrxID: {trx_id}, ResultCode: {result_code}, Amount: {amount}, Phone: {phone}")
+
+        # Get transaction object
         try:
             mpesa_transaction = MpesaTransaction.objects.get(
-                checkout_request_id=checkout_request_id,
-                merchant_request_id=merchant_request_id
+                merchant_request_id=merchant_request_id,
+                checkout_request_id=checkout_request_id
             )
+
+            transaction = MpesaTransaction.objects.filter(trx_id=checkout_request_id).first()
+            if transaction:
+                transaction.trx_id = actual_mpesa_code  # e.g. "TGP4GUGY5S"
+                transaction.result_code = str(result_code)  # 0 = success
+                transaction.save()
+
         except MpesaTransaction.DoesNotExist:
             print(f"[CALLBACK ERROR]: No MpesaTransaction found for CheckoutRequestID: {checkout_request_id}")
             return JsonResponse({"ResultCode": 1, "ResultDesc": "Transaction not found"}, status=404)
 
+        # Update transaction record
         mpesa_transaction.trx_id = trx_id
         mpesa_transaction.result_code = result_code
         mpesa_transaction.result_desc = result_desc
         mpesa_transaction.amount = amount
+        mpesa_transaction.phone_number = phone  # ensure this matches your model field
         mpesa_transaction.save()
 
-        # Update Payment object if transaction was successful
-        if result_code == 0:  # MPesa success code
-            try:
-                payment = Payment.objects.get(booking=mpesa_transaction.booking)
-                payment.trxid = trx_id
-                payment.save()
-                print(f"[CALLBACK] Payment updated for Booking ID: {mpesa_transaction.booking.id}, TrxID: {trx_id}")
-            except Payment.DoesNotExist:
-                print(f"[CALLBACK ERROR]: No Payment found for Booking ID: {mpesa_transaction.booking.id}")
-                # Optionally create a Payment object here if needed
-                pass
+        # Optionally update user's phone number if not already set
+        user = mpesa_transaction.booking.user
+        if hasattr(user, 'phone') and (not user.phone or user.phone.strip() == ""):
+            user.phone = phone
+            user.save()
+
+        # Create or update payment record
+        if result_code == '0':
+            payment, _ = Payment.objects.get_or_create(booking=mpesa_transaction.booking)
+            payment.trxid = trx_id
+            payment.save()
+            print(f"[CALLBACK] Payment saved for Booking ID: {mpesa_transaction.booking.id}, TrxID: {trx_id}")
 
         return JsonResponse({"ResultCode": 0, "ResultDesc": "Accepted"}, status=200)
 
