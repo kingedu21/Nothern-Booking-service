@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
-
+from django.utils import timezone
 # Create your models here.
 from django.contrib.auth.models import AbstractUser
 from django.db import models
@@ -231,6 +231,7 @@ class MpesaTransaction(models.Model):
     result_code = models.CharField(max_length=10, null=True, blank=True)
     result_desc = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    transaction_date = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
         return f"MPesa Transaction for Booking {self.booking.id if self.booking else 'None'}"
